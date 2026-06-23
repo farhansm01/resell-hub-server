@@ -90,6 +90,91 @@ async function run() {
       }
     })
 
+
+    // GET /api/products?sellerId=... — list only this seller's products, newest first
+    app.get('/api/products', async (req, res) => {
+      try {
+        const { sellerId } = req.query
+        if (!sellerId) {
+          return res.status(400).json({ message: 'sellerId is required' })
+        }
+
+        const products = await productCollection
+          .find({ sellerId })
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(products)
+      } catch (err) {
+        console.error('Error fetching products:', err)
+        res.status(500).json({ message: 'Failed to fetch products' })
+      }
+    })
+
+    // PUT /api/products/:id — update a listing, forces status back to "pending" for re-review
+    app.put('/api/products/:id', async (req, res) => {
+      try {
+        const { id } = req.params
+        const { sellerId, title, category, condition, price, stock, description, image } = req.body
+
+        if (!sellerId) {
+          return res.status(400).json({ message: 'sellerId is required' })
+        }
+
+        const updateDoc = {
+          title,
+          category,
+          condition,
+          price: Number(price),
+          stock: Number(stock),
+          description,
+          image,
+          status: 'pending', // edited listings go back through review
+          updatedAt: new Date(),
+        }
+
+        const result = await productCollection.updateOne(
+          { _id: new ObjectId(id), sellerId }, // sellerId check prevents editing someone else's listing
+          { $set: updateDoc }
+        )
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: 'Product not found or not owned by this seller' })
+        }
+
+        res.status(200).json({ _id: id, ...updateDoc })
+      } catch (err) {
+        console.error('Error updating product:', err)
+        res.status(500).json({ message: 'Failed to update product' })
+      }
+    })
+
+    // DELETE /api/products/:id?sellerId=... — sellerId check prevents deleting someone else's listing
+    app.delete('/api/products/:id', async (req, res) => {
+      try {
+        const { id } = req.params
+        const { sellerId } = req.query
+
+        if (!sellerId) {
+          return res.status(400).json({ message: 'sellerId is required' })
+        }
+
+        const result = await productCollection.deleteOne({
+          _id: new ObjectId(id),
+          sellerId,
+        })
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'Product not found or not owned by this seller' })
+        }
+
+        res.status(200).json({ message: 'Product deleted' })
+      } catch (err) {
+        console.error('Error deleting product:', err)
+        res.status(500).json({ message: 'Failed to delete product' })
+      }
+    })
+
     await client.db('admin').command({ ping: 1 })
     console.log('Successfully connected to MongoDB!')
 
