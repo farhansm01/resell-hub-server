@@ -42,6 +42,54 @@ async function run() {
 
     // ---- ROUTES WILL GO HERE ----
 
+    // ---- ROUTES WILL GO HERE ----
+
+    // POST /api/products — create a new product listing
+    // status is always forced to "pending" — sellers can't self-approve their own listings
+    app.post('/api/products', async (req, res) => {
+      try {
+        const {
+          title,
+          category,
+          condition,
+          price,
+          stock,
+          description,
+          image,
+          sellerId,
+          sellerName,
+          sellerEmail,
+        } = req.body
+
+        // Required-field check
+        if (!title || !category || !condition || !price || !stock || !description || !image || !sellerId) {
+          return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        const product = {
+          title,
+          category,
+          condition,
+          price: Number(price),
+          stock: Number(stock),
+          description,
+          image, // imgbb hosted URL
+          sellerId,
+          sellerName,
+          sellerEmail,
+          status: 'pending', // always pending on creation — admin approves separately
+          createdAt: new Date(),
+        }
+
+        const result = await productCollection.insertOne(product)
+
+        res.status(201).json({ ...product, _id: result.insertedId })
+      } catch (err) {
+        console.error('Error creating product:', err)
+        res.status(500).json({ message: 'Failed to create product' })
+      }
+    })
+
     await client.db('admin').command({ ping: 1 })
     console.log('Successfully connected to MongoDB!')
 
