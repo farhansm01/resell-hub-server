@@ -199,7 +199,24 @@ async function run() {
       }
     })
 
-    
+    // GET /api/wishlist/:userId — this buyer's saved products
+    app.get('/api/wishlist/:userId', async (req, res) => {
+      try {
+        const { userId } = req.params
+
+        const wishlist = await wishlistCollection
+          .find({ userId })
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(wishlist)
+      } catch (err) {
+        console.error('Error fetching wishlist:', err)
+        res.status(500).json({ message: 'Failed to fetch wishlist' })
+      }
+    })
+
+
 
 
 
