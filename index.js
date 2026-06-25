@@ -6,7 +6,15 @@ const app = express()
 const port = process.env.PORT || 5000
 
 // Middleware
+// Replace this:
 app.use(cors())
+
+// With this:
+app.use(cors({
+  origin: 'http://localhost:3000',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ limit: '10mb', extended: true }))
 
@@ -33,7 +41,7 @@ async function run() {
     const database = client.db('resellhub')
 
     // Collections
-    const userCollection = database.collection('users')
+    const userCollection = database.collection('user')
     const productCollection = database.collection('products')
     const orderCollection = database.collection('orders')
     const paymentCollection = database.collection('payments')
@@ -44,20 +52,14 @@ async function run() {
 
     //users
 
-    // GET /api/users/:userId — fetch full user doc for profile pre-fill
-    app.get('/api/users/:userId', async (req, res) => {
+    // GET /api/users/:userId
+    // GET /api/users/:userEmail — fetch by email
+    app.get('/api/users/:userEmail', async (req, res) => {
       try {
-        const { userId } = req.params
-
-        const user = await userCollection.findOne({ _id: new ObjectId(userId) })
-
-        if (!user) {
-          return res.status(404).json({ message: 'User not found' })
-        }
-
-        // Never send password or sensitive auth internals to client
+        const { userEmail } = req.params
+        const user = await userCollection.findOne({ email: userEmail })
+        if (!user) return res.status(404).json({ message: 'User not found' })
         const { password, ...safeUser } = user
-
         res.status(200).json(safeUser)
       } catch (err) {
         console.error('Error fetching user:', err)
@@ -65,13 +67,12 @@ async function run() {
       }
     })
 
-    // PATCH /api/users/:userId — update profile fields (name, phone, location, image)
-    app.patch('/api/users/:userId', async (req, res) => {
+    // PATCH /api/users/:userEmail — update by email
+    app.patch('/api/users/:userEmail', async (req, res) => {
       try {
-        const { userId } = req.params
+        const { userEmail } = req.params
         const { name, phone, location, image } = req.body
 
-        // Build update object with only provided fields
         const updateFields = {}
         if (name !== undefined) updateFields.name = name
         if (phone !== undefined) updateFields.phone = phone
@@ -80,7 +81,7 @@ async function run() {
         updateFields.updatedAt = new Date()
 
         const result = await userCollection.updateOne(
-          { _id: new ObjectId(userId) },
+          { email: userEmail },
           { $set: updateFields }
         )
 
@@ -143,23 +144,67 @@ async function run() {
     })
 
 
-    // GET /api/products?sellerId=... — list only this seller's products, newest first
+    // GET /api/products — all approved products with search, filter, sort, pagination
     app.get('/api/products', async (req, res) => {
       try {
-        const { sellerId } = req.query
-        if (!sellerId) {
-          return res.status(400).json({ message: 'sellerId is required' })
+        const { sellerId, status, search, category, sort, page = 1, limit = 9 } = req.query
+
+        const query = {}
+
+        // seller-specific listing (used by seller dashboard)
+        if (sellerId) query.sellerId = sellerId
+
+        // status filter — if no status passed, default to approved for public browsing
+        if (status) {
+          query.status = status
+        } else if (!sellerId) {
+          query.status = 'approved'
         }
 
+        // search by title (case insensitive)
+        if (search) query.title = { $regex: search, $options: 'i' }
+
+        // category filter
+        if (category && category !== 'all') query.category = category
+
+        // sort
+        let sortOption = { createdAt: -1 } // default: newest first
+        if (sort === 'price_asc') sortOption = { price: 1 }
+        if (sort === 'price_desc') sortOption = { price: -1 }
+
+        const pageNum = parseInt(page)
+        const limitNum = parseInt(limit)
+        const skip = (pageNum - 1) * limitNum
+
+        const total = await productCollection.countDocuments(query)
         const products = await productCollection
-          .find({ sellerId })
-          .sort({ createdAt: -1 })
+          .find(query)
+          .sort(sortOption)
+          .skip(skip)
+          .limit(limitNum)
           .toArray()
 
-        res.status(200).json(products)
+        res.status(200).json({
+          products,
+          totalPages: Math.ceil(total / limitNum),
+          currentPage: pageNum,
+        })
       } catch (err) {
         console.error('Error fetching products:', err)
         res.status(500).json({ message: 'Failed to fetch products' })
+      }
+    })
+
+    // GET /api/products/:id — single product by ObjectId
+    app.get('/api/products/:id', async (req, res) => {
+      try {
+        const { id } = req.params
+        const product = await productCollection.findOne({ _id: new ObjectId(id) })
+        if (!product) return res.status(404).json({ message: 'Product not found' })
+        res.status(200).json(product)
+      } catch (err) {
+        console.error('Error fetching product:', err)
+        res.status(500).json({ message: 'Failed to fetch product' })
       }
     })
 
