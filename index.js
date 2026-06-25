@@ -199,6 +199,33 @@ async function run() {
       }
     })
 
+    // PATCH /api/orders/:orderId/cancel — buyer cancels their own pending order
+    app.patch('/api/orders/:orderId/cancel', async (req, res) => {
+      try {
+        const { orderId } = req.params
+        const { buyerId } = req.body
+
+        if (!buyerId) {
+          return res.status(400).json({ message: 'buyerId is required' })
+        }
+
+        // Server-side guard — only the owning buyer can cancel, and only while still pending
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(orderId), buyerId, orderStatus: 'pending' },
+          { $set: { orderStatus: 'cancelled', updatedAt: new Date() } }
+        )
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: 'Order not found, not yours, or no longer pending' })
+        }
+
+        res.status(200).json({ message: 'Order cancelled' })
+      } catch (err) {
+        console.error('Error cancelling order:', err)
+        res.status(500).json({ message: 'Failed to cancel order' })
+      }
+    })
+
     // GET /api/wishlist/:userId — this buyer's saved products
     app.get('/api/wishlist/:userId', async (req, res) => {
       try {
