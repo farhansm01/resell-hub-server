@@ -6,10 +6,6 @@ const app = express()
 const port = process.env.PORT || 5000
 
 // Middleware
-// Replace this:
-app.use(cors())
-
-// With this:
 app.use(cors({
   origin: 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -40,7 +36,6 @@ async function run() {
 
     const database = client.db('resellhub')
 
-    // Collections
     const userCollection = database.collection('user')
     const productCollection = database.collection('products')
     const orderCollection = database.collection('orders')
@@ -48,12 +43,10 @@ async function run() {
     const wishlistCollection = database.collection('wishlist')
     const reviewCollection = database.collection('reviews')
 
-    // ---- ROUTES WILL GO HERE ----
 
-    //users
+    // ── USERS ────────────────────────────────────────────────────────────
 
-    // GET /api/users/:userId
-    // GET /api/users/:userEmail — fetch by email
+    // GET /api/users/:userEmail — fetch user by email
     app.get('/api/users/:userEmail', async (req, res) => {
       try {
         const { userEmail } = req.params
@@ -67,7 +60,7 @@ async function run() {
       }
     })
 
-    // PATCH /api/users/:userEmail — update by email
+    // PATCH /api/users/:userEmail — update profile fields by email
     app.patch('/api/users/:userEmail', async (req, res) => {
       try {
         const { userEmail } = req.params
@@ -97,24 +90,13 @@ async function run() {
     })
 
 
-    // POST /api/products — create a new product listing
-    // status is always forced to "pending" — sellers can't self-approve their own listings
+    // ── PRODUCTS ─────────────────────────────────────────────────────────
+
+    // POST /api/products — create new listing (always pending, admin approves)
     app.post('/api/products', async (req, res) => {
       try {
-        const {
-          title,
-          category,
-          condition,
-          price,
-          stock,
-          description,
-          image,
-          sellerId,
-          sellerName,
-          sellerEmail,
-        } = req.body
+        const { title, category, condition, price, stock, description, image, sellerId, sellerName, sellerEmail } = req.body
 
-        // Required-field check
         if (!title || !category || !condition || !price || !stock || !description || !image || !sellerId) {
           return res.status(400).json({ message: 'Missing required fields' })
         }
@@ -126,16 +108,15 @@ async function run() {
           price: Number(price),
           stock: Number(stock),
           description,
-          image, // imgbb hosted URL
+          image,
           sellerId,
           sellerName,
           sellerEmail,
-          status: 'pending', // always pending on creation — admin approves separately
+          status: 'pending',
           createdAt: new Date(),
         }
 
         const result = await productCollection.insertOne(product)
-
         res.status(201).json({ ...product, _id: result.insertedId })
       } catch (err) {
         console.error('Error creating product:', err)
@@ -143,32 +124,27 @@ async function run() {
       }
     })
 
-
-    // GET /api/products — all approved products with search, filter, sort, pagination
+    // GET /api/products — fetch products with optional filters
+    // Public: returns approved products with search/category/sort/pagination
+    // Seller dashboard: pass ?sellerId= to get own listings regardless of status
     app.get('/api/products', async (req, res) => {
       try {
         const { sellerId, status, search, category, sort, page = 1, limit = 9 } = req.query
 
         const query = {}
 
-        // seller-specific listing (used by seller dashboard)
         if (sellerId) query.sellerId = sellerId
 
-        // status filter — if no status passed, default to approved for public browsing
         if (status) {
           query.status = status
         } else if (!sellerId) {
           query.status = 'approved'
         }
 
-        // search by title (case insensitive)
         if (search) query.title = { $regex: search, $options: 'i' }
-
-        // category filter
         if (category && category !== 'all') query.category = category
 
-        // sort
-        let sortOption = { createdAt: -1 } // default: newest first
+        let sortOption = { createdAt: -1 }
         if (sort === 'price_asc') sortOption = { price: 1 }
         if (sort === 'price_desc') sortOption = { price: -1 }
 
@@ -208,7 +184,7 @@ async function run() {
       }
     })
 
-    // PUT /api/products/:id — update a listing, forces status back to "pending" for re-review
+    // PUT /api/products/:id — update listing (forces back to pending for re-review)
     app.put('/api/products/:id', async (req, res) => {
       try {
         const { id } = req.params
@@ -226,12 +202,12 @@ async function run() {
           stock: Number(stock),
           description,
           image,
-          status: 'pending', // edited listings go back through review
+          status: 'pending',
           updatedAt: new Date(),
         }
 
         const result = await productCollection.updateOne(
-          { _id: new ObjectId(id), sellerId }, // sellerId check prevents editing someone else's listing
+          { _id: new ObjectId(id), sellerId },
           { $set: updateDoc }
         )
 
@@ -246,7 +222,7 @@ async function run() {
       }
     })
 
-    // DELETE /api/products/:id?sellerId=... — sellerId check prevents deleting someone else's listing
+    // DELETE /api/products/:id?sellerId= — seller can only delete own listings
     app.delete('/api/products/:id', async (req, res) => {
       try {
         const { id } = req.params
@@ -273,10 +249,9 @@ async function run() {
     })
 
 
+    // ── ORDERS ───────────────────────────────────────────────────────────
 
-    // orders
-
-    // GET /api/orders/buyer/:buyerId — optional ?status= filter, reused later by the Review page
+    // GET /api/orders/buyer/:buyerId — buyer's orders, optional ?status= filter
     app.get('/api/orders/buyer/:buyerId', async (req, res) => {
       try {
         const { buyerId } = req.params
@@ -297,7 +272,7 @@ async function run() {
       }
     })
 
-    // PATCH /api/orders/:orderId/cancel — buyer cancels their own pending order
+    // PATCH /api/orders/:orderId/cancel — buyer cancels own pending order
     app.patch('/api/orders/:orderId/cancel', async (req, res) => {
       try {
         const { orderId } = req.params
@@ -307,7 +282,6 @@ async function run() {
           return res.status(400).json({ message: 'buyerId is required' })
         }
 
-        // Server-side guard — only the owning buyer can cancel, and only while still pending
         const result = await orderCollection.updateOne(
           { _id: new ObjectId(orderId), buyerId, orderStatus: 'pending' },
           { $set: { orderStatus: 'cancelled', updatedAt: new Date() } }
@@ -324,7 +298,10 @@ async function run() {
       }
     })
 
-    // GET /api/wishlist/:userId — this buyer's saved products
+
+    // ── WISHLIST ─────────────────────────────────────────────────────────
+
+    // GET /api/wishlist/:userId — buyer's saved products
     app.get('/api/wishlist/:userId', async (req, res) => {
       try {
         const { userId } = req.params
@@ -341,7 +318,31 @@ async function run() {
       }
     })
 
-    // DELETE /api/wishlist/:wishlistId?userId=... — userId check prevents removing someone else's item
+    // POST /api/wishlist — add product to wishlist (duplicate check)
+    app.post('/api/wishlist', async (req, res) => {
+      try {
+        const { userId, productId } = req.body
+
+        if (!userId || !productId) {
+          return res.status(400).json({ message: 'userId and productId are required' })
+        }
+
+        const existing = await wishlistCollection.findOne({ userId, productId })
+        if (existing) {
+          return res.status(409).json({ message: 'Already in wishlist' })
+        }
+
+        const item = { userId, productId, createdAt: new Date() }
+        await wishlistCollection.insertOne(item)
+
+        res.status(201).json({ message: 'Added to wishlist' })
+      } catch (err) {
+        console.error('Error adding to wishlist:', err)
+        res.status(500).json({ message: 'Failed to add to wishlist' })
+      }
+    })
+
+    // DELETE /api/wishlist/:wishlistId?userId= — remove from wishlist
     app.delete('/api/wishlist/:wishlistId', async (req, res) => {
       try {
         const { wishlistId } = req.params
@@ -368,9 +369,30 @@ async function run() {
     })
 
 
+    // ── REVIEWS ──────────────────────────────────────────────────────────
 
-    //payment
-    // GET /api/payments/buyer/:buyerId
+    // GET /api/reviews?productId= — all reviews for a product
+    app.get('/api/reviews', async (req, res) => {
+      try {
+        const { productId } = req.query
+        if (!productId) return res.status(400).json({ message: 'productId is required' })
+
+        const reviews = await reviewCollection
+          .find({ productId })
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(reviews)
+      } catch (err) {
+        console.error('Error fetching reviews:', err)
+        res.status(500).json({ message: 'Failed to fetch reviews' })
+      }
+    })
+
+
+    // ── PAYMENTS ─────────────────────────────────────────────────────────
+
+    // GET /api/payments/buyer/:buyerId — buyer's payment history
     app.get('/api/payments/buyer/:buyerId', async (req, res) => {
       try {
         const { buyerId } = req.params
@@ -386,8 +408,6 @@ async function run() {
         res.status(500).json({ message: 'Failed to fetch payments' })
       }
     })
-
-
 
 
     await client.db('admin').command({ ping: 1 })
