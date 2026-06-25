@@ -443,6 +443,32 @@ async function run() {
       }
     })
 
+    // POST /api/payments — save payment record
+    app.post('/api/payments', async (req, res) => {
+      try {
+        const { orderId, transactionId, buyerId, amount, paymentStatus, paymentDate } = req.body
+
+        if (!orderId || !transactionId || !buyerId || !amount) {
+          return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        const payment = {
+          orderId,
+          transactionId,
+          buyerId,
+          amount: Number(amount),
+          paymentStatus: paymentStatus || 'paid',
+          paymentDate: paymentDate || new Date(),
+        }
+
+        const result = await paymentCollection.insertOne(payment)
+        res.status(201).json({ ...payment, _id: result.insertedId })
+      } catch (err) {
+        console.error('Error saving payment:', err)
+        res.status(500).json({ message: 'Failed to save payment' })
+      }
+    })
+
 
     await client.db('admin').command({ ping: 1 })
     console.log('Successfully connected to MongoDB!')
