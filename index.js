@@ -42,7 +42,6 @@ async function run() {
 
     // ---- ROUTES WILL GO HERE ----
 
-    // ---- ROUTES WILL GO HERE ----
 
     // POST /api/products — create a new product listing
     // status is always forced to "pending" — sellers can't self-approve their own listings
@@ -174,6 +173,35 @@ async function run() {
         res.status(500).json({ message: 'Failed to delete product' })
       }
     })
+
+
+
+    // orders
+
+    // GET /api/orders/buyer/:buyerId — optional ?status= filter, reused later by the Review page
+    app.get('/api/orders/buyer/:buyerId', async (req, res) => {
+      try {
+        const { buyerId } = req.params
+        const { status } = req.query
+
+        const query = { buyerId }
+        if (status) query.orderStatus = status
+
+        const orders = await orderCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(orders)
+      } catch (err) {
+        console.error('Error fetching buyer orders:', err)
+        res.status(500).json({ message: 'Failed to fetch orders' })
+      }
+    })
+
+    
+
+
 
     await client.db('admin').command({ ping: 1 })
     console.log('Successfully connected to MongoDB!')
