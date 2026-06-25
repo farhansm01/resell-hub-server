@@ -243,6 +243,32 @@ async function run() {
       }
     })
 
+    // DELETE /api/wishlist/:wishlistId?userId=... — userId check prevents removing someone else's item
+    app.delete('/api/wishlist/:wishlistId', async (req, res) => {
+      try {
+        const { wishlistId } = req.params
+        const { userId } = req.query
+
+        if (!userId) {
+          return res.status(400).json({ message: 'userId is required' })
+        }
+
+        const result = await wishlistCollection.deleteOne({
+          _id: new ObjectId(wishlistId),
+          userId,
+        })
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'Wishlist item not found or not owned by this user' })
+        }
+
+        res.status(200).json({ message: 'Removed from wishlist' })
+      } catch (err) {
+        console.error('Error removing wishlist item:', err)
+        res.status(500).json({ message: 'Failed to remove from wishlist' })
+      }
+    })
+
 
 
 
