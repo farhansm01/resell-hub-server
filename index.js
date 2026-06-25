@@ -251,7 +251,7 @@ async function run() {
 
     // ── ORDERS ───────────────────────────────────────────────────────────
 
-    
+
     // POST /api/orders — create order after successful payment
     app.post('/api/orders', async (req, res) => {
       try {
@@ -300,45 +300,43 @@ async function run() {
       }
     })
 
-    // POST /api/orders — create order after successful payment
-    // POST /api/orders — create order after successful payment
-    app.post('/api/orders', async (req, res) => {
+    app.get('/api/orders/buyer/:buyerId', async (req, res) => {
       try {
-        const {
-          productId, buyerId, buyerName, buyerEmail,
-          sellerId, sellerName, sellerEmail, amount, stripeSessionId
-        } = req.body
+        const { buyerId } = req.params
+        const { status } = req.query
 
-        if (!productId || !buyerId || !sellerId || !amount) {
-          return res.status(400).json({ message: 'Missing required fields' })
-        }
+        const query = { buyerId }
+        if (status) query.orderStatus = status
 
-        // prevent duplicate orders if /payment-success page re-runs (refresh/back button)
-        if (stripeSessionId) {
-          const existing = await orderCollection.findOne({ stripeSessionId })
-          if (existing) return res.status(200).json(existing)
-        }
+        const orders = await orderCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray()
 
-        const order = {
-          productId,
-          buyerId,
-          buyerName,
-          buyerEmail,
-          sellerId,
-          sellerName,
-          sellerEmail,
-          amount: Number(amount),
-          stripeSessionId: stripeSessionId || null,
-          orderStatus: 'pending',
-          paymentStatus: 'paid',
-          createdAt: new Date(),
-        }
+        if (orders.length === 0) return res.status(200).json([])
 
-        const result = await orderCollection.insertOne(order)
-        res.status(201).json({ ...order, _id: result.insertedId })
+        // Enrich with product title and image
+        const productIds = orders
+          .map(o => { try { return new ObjectId(o.productId) } catch { return null } })
+          .filter(Boolean)
+
+        const products = await productCollection
+          .find({ _id: { $in: productIds } })
+          .toArray()
+
+        const productMap = {}
+        products.forEach(p => { productMap[p._id.toString()] = p })
+
+        const enriched = orders.map(order => ({
+          ...order,
+          productName: productMap[order.productId]?.title || 'Product unavailable',
+          productImage: productMap[order.productId]?.image || '',
+        }))
+
+        res.status(200).json(enriched)
       } catch (err) {
-        console.error('Error creating order:', err)
-        res.status(500).json({ message: 'Failed to create order' })
+        console.error('Error fetching buyer orders:', err)
+        res.status(500).json({ message: 'Failed to fetch orders' })
       }
     })
 
@@ -371,7 +369,7 @@ async function run() {
 
     // ── WISHLIST ─────────────────────────────────────────────────────────
 
-    // GET /api/wishlist/:userId — buyer's saved products
+    // GET /api/wishlist/:userId — buyer's saved products (with product details)
     app.get('/api/wishlist/:userId', async (req, res) => {
       try {
         const { userId } = req.params
@@ -381,7 +379,37 @@ async function run() {
           .sort({ createdAt: -1 })
           .toArray()
 
-        res.status(200).json(wishlist)
+        if (wishlist.length === 0) return res.status(200).json([])
+
+        // Fetch product details for each wishlist item
+        const productIds = wishlist.map(item => new ObjectId(item.productId))
+        const products = await productCollection
+          .find({ _id: { $in: productIds } })
+          .toArray()
+
+        // Map productId → product for quick lookup
+        const productMap = {}
+        products.forEach(p => {
+          productMap[p._id.toString()] = p
+        })
+
+        // Merge wishlist entry with its product fields
+        const enriched = wishlist.map(item => {
+          const product = productMap[item.productId] || {}
+          return {
+            _id: item._id,
+            userId: item.userId,
+            productId: item.productId,
+            createdAt: item.createdAt,
+            title: product.title || 'Product unavailable',
+            image: product.image || '',
+            price: product.price ?? 0,
+            category: product.category || '',
+            status: product.status || '',
+          }
+        })
+
+        res.status(200).json(enriched)
       } catch (err) {
         console.error('Error fetching wishlist:', err)
         res.status(500).json({ message: 'Failed to fetch wishlist' })
@@ -456,6 +484,43 @@ async function run() {
       } catch (err) {
         console.error('Error fetching reviews:', err)
         res.status(500).json({ message: 'Failed to fetch reviews' })
+      }
+    })
+
+    // POST /api/reviews — submit a review (buyer must have ordered the product, once only)
+    app.post('/api/reviews', async (req, res) => {
+      try {
+        const { productId, buyerId, buyerName, rating, comment } = req.body
+
+        if (!productId || !buyerId || !rating || !comment) {
+          return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        // check buyer actually ordered this product
+        const order = await orderCollection.findOne({ productId, buyerId })
+        if (!order) {
+          return res.status(403).json({ message: 'You can only review products you have purchased' })
+        }
+
+        // duplicate check
+        const existing = await reviewCollection.findOne({ productId, 'reviewerInfo.userId': buyerId })
+        if (existing) {
+          return res.status(409).json({ message: 'You have already reviewed this product' })
+        }
+
+        const review = {
+          reviewerInfo: { userId: buyerId, name: buyerName },
+          productId,
+          rating: Number(rating),
+          comment,
+          createdAt: new Date(),
+        }
+
+        const result = await reviewCollection.insertOne(review)
+        res.status(201).json({ ...review, _id: result.insertedId })
+      } catch (err) {
+        console.error('Error creating review:', err)
+        res.status(500).json({ message: 'Failed to submit review' })
       }
     })
 
