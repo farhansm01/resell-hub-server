@@ -272,6 +272,40 @@ async function run() {
       }
     })
 
+    // POST /api/orders — create order after successful payment
+    app.post('/api/orders', async (req, res) => {
+      try {
+        const {
+          productId, buyerId, buyerName, buyerEmail,
+          sellerId, sellerName, sellerEmail, amount
+        } = req.body
+
+        if (!productId || !buyerId || !sellerId || !amount) {
+          return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        const order = {
+          productId,
+          buyerId,
+          buyerName,
+          buyerEmail,
+          sellerId,
+          sellerName,
+          sellerEmail,
+          amount: Number(amount),
+          orderStatus: 'pending',
+          paymentStatus: 'paid',
+          createdAt: new Date(),
+        }
+
+        const result = await orderCollection.insertOne(order)
+        res.status(201).json({ ...order, _id: result.insertedId })
+      } catch (err) {
+        console.error('Error creating order:', err)
+        res.status(500).json({ message: 'Failed to create order' })
+      }
+    })
+
     // PATCH /api/orders/:orderId/cancel — buyer cancels own pending order
     app.patch('/api/orders/:orderId/cancel', async (req, res) => {
       try {
