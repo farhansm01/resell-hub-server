@@ -251,37 +251,24 @@ async function run() {
 
     // ── ORDERS ───────────────────────────────────────────────────────────
 
-    // GET /api/orders/buyer/:buyerId — buyer's orders, optional ?status= filter
-    app.get('/api/orders/buyer/:buyerId', async (req, res) => {
-      try {
-        const { buyerId } = req.params
-        const { status } = req.query
-
-        const query = { buyerId }
-        if (status) query.orderStatus = status
-
-        const orders = await orderCollection
-          .find(query)
-          .sort({ createdAt: -1 })
-          .toArray()
-
-        res.status(200).json(orders)
-      } catch (err) {
-        console.error('Error fetching buyer orders:', err)
-        res.status(500).json({ message: 'Failed to fetch orders' })
-      }
-    })
-
+    
     // POST /api/orders — create order after successful payment
     app.post('/api/orders', async (req, res) => {
       try {
         const {
           productId, buyerId, buyerName, buyerEmail,
-          sellerId, sellerName, sellerEmail, amount
+          sellerId, sellerName, sellerEmail, amount,
+          stripeSessionId, deliveryInfo, // deliveryInfo added
         } = req.body
 
         if (!productId || !buyerId || !sellerId || !amount) {
           return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        // prevent duplicate orders on refresh/back button
+        if (stripeSessionId) {
+          const existing = await orderCollection.findOne({ stripeSessionId })
+          if (existing) return res.status(200).json(existing)
         }
 
         const order = {
@@ -293,6 +280,55 @@ async function run() {
           sellerName,
           sellerEmail,
           amount: Number(amount),
+          // delivery info from checkout form
+          deliveryInfo: {
+            name: deliveryInfo?.name || '',
+            phone: deliveryInfo?.phone || '',
+            address: deliveryInfo?.address || '',
+          },
+          stripeSessionId: stripeSessionId || null,
+          orderStatus: 'pending',
+          paymentStatus: 'paid',
+          createdAt: new Date(),
+        }
+
+        const result = await orderCollection.insertOne(order)
+        res.status(201).json({ ...order, _id: result.insertedId })
+      } catch (err) {
+        console.error('Error creating order:', err)
+        res.status(500).json({ message: 'Failed to create order' })
+      }
+    })
+
+    // POST /api/orders — create order after successful payment
+    // POST /api/orders — create order after successful payment
+    app.post('/api/orders', async (req, res) => {
+      try {
+        const {
+          productId, buyerId, buyerName, buyerEmail,
+          sellerId, sellerName, sellerEmail, amount, stripeSessionId
+        } = req.body
+
+        if (!productId || !buyerId || !sellerId || !amount) {
+          return res.status(400).json({ message: 'Missing required fields' })
+        }
+
+        // prevent duplicate orders if /payment-success page re-runs (refresh/back button)
+        if (stripeSessionId) {
+          const existing = await orderCollection.findOne({ stripeSessionId })
+          if (existing) return res.status(200).json(existing)
+        }
+
+        const order = {
+          productId,
+          buyerId,
+          buyerName,
+          buyerEmail,
+          sellerId,
+          sellerName,
+          sellerEmail,
+          amount: Number(amount),
+          stripeSessionId: stripeSessionId || null,
           orderStatus: 'pending',
           paymentStatus: 'paid',
           createdAt: new Date(),
@@ -444,28 +480,34 @@ async function run() {
     })
 
     // POST /api/payments — save payment record
+    // POST /api/payments — record payment after successful checkout
     app.post('/api/payments', async (req, res) => {
       try {
-        const { orderId, transactionId, buyerId, amount, paymentStatus, paymentDate } = req.body
+        const { orderId, transactionId, buyerId, amount, paymentDate } = req.body
 
         if (!orderId || !transactionId || !buyerId || !amount) {
           return res.status(400).json({ message: 'Missing required fields' })
         }
+
+        // dedupe - if this transactionId already has a payment, return it instead of inserting again
+        const existing = await paymentCollection.findOne({ transactionId })
+        if (existing) return res.status(200).json(existing)
 
         const payment = {
           orderId,
           transactionId,
           buyerId,
           amount: Number(amount),
-          paymentStatus: paymentStatus || 'paid',
-          paymentDate: paymentDate || new Date(),
+          paymentStatus: 'paid',
+          paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+          createdAt: new Date(),
         }
 
         const result = await paymentCollection.insertOne(payment)
         res.status(201).json({ ...payment, _id: result.insertedId })
       } catch (err) {
-        console.error('Error saving payment:', err)
-        res.status(500).json({ message: 'Failed to save payment' })
+        console.error('Error creating payment:', err)
+        res.status(500).json({ message: 'Failed to create payment' })
       }
     })
 
