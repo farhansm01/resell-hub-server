@@ -271,6 +271,25 @@ async function run() {
 
 
 
+    //payment
+    // GET /api/payments/buyer/:buyerId
+    app.get('/api/payments/buyer/:buyerId', async (req, res) => {
+      try {
+        const { buyerId } = req.params
+
+        const payments = await paymentCollection
+          .find({ buyerId })
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(payments)
+      } catch (err) {
+        console.error('Error fetching payments:', err)
+        res.status(500).json({ message: 'Failed to fetch payments' })
+      }
+    })
+
+
 
 
     await client.db('admin').command({ ping: 1 })
