@@ -42,6 +42,59 @@ async function run() {
 
     // ---- ROUTES WILL GO HERE ----
 
+    //users
+
+    // GET /api/users/:userId — fetch full user doc for profile pre-fill
+    app.get('/api/users/:userId', async (req, res) => {
+      try {
+        const { userId } = req.params
+
+        const user = await userCollection.findOne({ _id: new ObjectId(userId) })
+
+        if (!user) {
+          return res.status(404).json({ message: 'User not found' })
+        }
+
+        // Never send password or sensitive auth internals to client
+        const { password, ...safeUser } = user
+
+        res.status(200).json(safeUser)
+      } catch (err) {
+        console.error('Error fetching user:', err)
+        res.status(500).json({ message: 'Failed to fetch user' })
+      }
+    })
+
+    // PATCH /api/users/:userId — update profile fields (name, phone, location, image)
+    app.patch('/api/users/:userId', async (req, res) => {
+      try {
+        const { userId } = req.params
+        const { name, phone, location, image } = req.body
+
+        // Build update object with only provided fields
+        const updateFields = {}
+        if (name !== undefined) updateFields.name = name
+        if (phone !== undefined) updateFields.phone = phone
+        if (location !== undefined) updateFields.location = location
+        if (image !== undefined) updateFields.image = image
+        updateFields.updatedAt = new Date()
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: updateFields }
+        )
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: 'User not found' })
+        }
+
+        res.status(200).json({ message: 'Profile updated successfully' })
+      } catch (err) {
+        console.error('Error updating user:', err)
+        res.status(500).json({ message: 'Failed to update profile' })
+      }
+    })
+
 
     // POST /api/products — create a new product listing
     // status is always forced to "pending" — sellers can't self-approve their own listings
