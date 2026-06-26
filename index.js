@@ -30,9 +30,13 @@ const client = new MongoClient(uri, {
   }
 })
 
-async function run() {
-  try {
-    await client.connect()
+// async function run() {
+//   try {
+//     await client.connect()
+
+    client.connect(() => {
+      console.log('Connecting to MongoDB')
+    }).catch(console.dir)
 
     const database = client.db('resellhub')
 
@@ -125,8 +129,6 @@ async function run() {
     })
 
     // GET /api/products — fetch products with optional filters
-    // Public: returns approved products with search/category/sort/pagination
-    // Seller dashboard: pass ?sellerId= to get own listings regardless of status
     app.get('/api/products', async (req, res) => {
       try {
         const { sellerId, status, search, category, sort, page = 1, limit = 9 } = req.query
@@ -596,7 +598,7 @@ async function run() {
       }
     })
 
-    // POST /api/payments — save payment record
+    
     // POST /api/payments — record payment after successful checkout
     app.post('/api/payments', async (req, res) => {
       try {
@@ -630,14 +632,14 @@ async function run() {
 
 
     // await client.db('admin').command({ ping: 1 })
-    console.log('Successfully connected to MongoDB!')
+//     console.log('Successfully connected to MongoDB!')
 
-  } finally {
-    // await client.close()
-  }
-}
+//   } finally {
+//     // await client.close()
+//   }
+// }
 
-run().catch(console.dir)
+// run().catch(console.dir)
 
 // ADD this
 if (process.env.NODE_ENV !== 'production') {
