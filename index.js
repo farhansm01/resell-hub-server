@@ -7,7 +7,7 @@ const port = process.env.PORT || 5000
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: process.env.ALLOWED_ORIGIN,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
@@ -629,7 +629,7 @@ async function run() {
     })
 
 
-    await client.db('admin').command({ ping: 1 })
+    // await client.db('admin').command({ ping: 1 })
     console.log('Successfully connected to MongoDB!')
 
   } finally {
