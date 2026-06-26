@@ -387,6 +387,37 @@ async function run() {
       }
     })
 
+    // PATCH /api/orders/:orderId/status — seller updates order status
+    app.patch('/api/orders/:orderId/status', async (req, res) => {
+      try {
+        const { orderId } = req.params
+        const { sellerId, orderStatus } = req.body
+
+        if (!sellerId || !orderStatus) {
+          return res.status(400).json({ message: 'sellerId and orderStatus are required' })
+        }
+
+        const validStatuses = ['accepted', 'processing', 'shipped', 'delivered']
+        if (!validStatuses.includes(orderStatus)) {
+          return res.status(400).json({ message: 'Invalid order status' })
+        }
+
+        const result = await orderCollection.updateOne(
+          { _id: new ObjectId(orderId), sellerId },
+          { $set: { orderStatus, updatedAt: new Date() } }
+        )
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: 'Order not found or not owned by this seller' })
+        }
+
+        res.status(200).json({ message: 'Order status updated' })
+      } catch (err) {
+        console.error('Error updating order status:', err)
+        res.status(500).json({ message: 'Failed to update order status' })
+      }
+    })
+
 
     // ── WISHLIST ─────────────────────────────────────────────────────────
 
