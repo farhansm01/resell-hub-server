@@ -340,6 +340,27 @@ async function run() {
       }
     })
 
+    // GET /api/orders/seller/:sellerId — seller's received orders
+    app.get('/api/orders/seller/:sellerId', async (req, res) => {
+      try {
+        const { sellerId } = req.params
+        const { status } = req.query
+
+        const query = { sellerId }
+        if (status) query.orderStatus = status
+
+        const orders = await orderCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray()
+
+        res.status(200).json(orders)
+      } catch (err) {
+        console.error('Error fetching seller orders:', err)
+        res.status(500).json({ message: 'Failed to fetch seller orders' })
+      }
+    })
+
     // PATCH /api/orders/:orderId/cancel — buyer cancels own pending order
     app.patch('/api/orders/:orderId/cancel', async (req, res) => {
       try {
