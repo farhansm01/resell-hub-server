@@ -639,6 +639,11 @@ async function run() {
 
 run().catch(console.dir)
 
-app.listen(port, () => {
-  console.log(`ReSell Hub server running on port ${port}`)
-})
+// ADD this
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`ReSell Hub server running on port ${port}`)
+  })
+}
+
+module.exports = app
