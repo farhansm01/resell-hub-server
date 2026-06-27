@@ -50,6 +50,24 @@ const reviewCollection = database.collection('reviews')
 
 // ── USERS ────────────────────────────────────────────────────────────
 
+// GET /api/users/top-sellers — sellers with most approved products
+app.get('/api/users/top-sellers', async (req, res) => {
+  try {
+    const topSellers = await productCollection.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: '$sellerId', sellerName: { $first: '$sellerName' }, sellerEmail: { $first: '$sellerEmail' }, totalListings: { $sum: 1 } } },
+      { $sort: { totalListings: -1 } },
+      { $limit: 6 },
+    ]).toArray()
+
+    res.status(200).json(topSellers)
+  } catch (err) {
+    console.error('Error fetching top sellers:', err)
+    res.status(500).json({ message: 'Failed to fetch top sellers' })
+  }
+})
+
+
 // GET /api/users/:userEmail — fetch user by email
 app.get('/api/users/:userEmail', async (req, res) => {
   try {
@@ -95,6 +113,23 @@ app.patch('/api/users/:userEmail', async (req, res) => {
 
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────
+
+// GET /api/products/categories — distinct categories with product count
+app.get('/api/products/categories', async (req, res) => {
+  try {
+    const categories = await productCollection.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]).toArray()
+
+    res.status(200).json(categories.map(c => ({ name: c._id, count: c.count })))
+  } catch (err) {
+    console.error('Error fetching categories:', err)
+    res.status(500).json({ message: 'Failed to fetch categories' })
+  }
+})
+
 
 // POST /api/products — create new listing (always pending, admin approves)
 app.post('/api/products', async (req, res) => {
@@ -173,6 +208,8 @@ app.get('/api/products', async (req, res) => {
   }
 })
 
+
+
 // GET /api/products/:id — single product by ObjectId
 app.get('/api/products/:id', async (req, res) => {
   try {
@@ -186,21 +223,6 @@ app.get('/api/products/:id', async (req, res) => {
   }
 })
 
-// GET /api/products/categories — distinct categories with product count
-app.get('/api/products/categories', async (req, res) => {
-  try {
-    const categories = await productCollection.aggregate([
-      { $match: { status: 'approved' } },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-    ]).toArray()
-
-    res.status(200).json(categories.map(c => ({ name: c._id, count: c.count })))
-  } catch (err) {
-    console.error('Error fetching categories:', err)
-    res.status(500).json({ message: 'Failed to fetch categories' })
-  }
-})
 
 // PUT /api/products/:id — update listing (forces back to pending for re-review)
 app.put('/api/products/:id', async (req, res) => {
