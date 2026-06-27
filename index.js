@@ -166,7 +166,7 @@ app.post('/api/products', async (req, res) => {
 // GET /api/products — fetch products with optional filters
 app.get('/api/products', async (req, res) => {
   try {
-    const { sellerId, status, search, category, sort, page = 1, limit = 9 } = req.query
+    const { sellerId, status, search, category, sort, page = 1, limit = 9, minPrice, maxPrice, condition } = req.query
 
     const query = {}
 
@@ -180,6 +180,16 @@ app.get('/api/products', async (req, res) => {
 
     if (search) query.title = { $regex: search, $options: 'i' }
     if (category && category !== 'all') query.category = category
+
+    // price range filter
+    if (minPrice || maxPrice) {
+      query.price = {}
+      if (minPrice) query.price.$gte = Number(minPrice)
+      if (maxPrice) query.price.$lte = Number(maxPrice)
+    }
+
+    // condition filter
+    if (condition && condition !== 'all') query.condition = condition
 
     let sortOption = { createdAt: -1 }
     if (sort === 'price_asc') sortOption = { price: 1 }
