@@ -668,6 +668,28 @@ app.post('/api/payments', async (req, res) => {
   }
 })
 
+
+
+// GET /api/stats — platform statistics for home page
+app.get('/api/stats', async (req, res) => {
+  try {
+    const totalProducts = await productCollection.countDocuments({ status: 'approved' })
+    const totalOrders = await orderCollection.countDocuments()
+    const sellers = await userCollection.distinct('_id', { role: 'seller' })
+    const buyers = await userCollection.distinct('_id', { role: 'buyer' })
+
+    res.status(200).json({
+      totalProducts,
+      totalOrders,
+      totalSellers: sellers.length,
+      totalBuyers: buyers.length,
+    })
+  } catch (err) {
+    console.error('Error fetching stats:', err)
+    res.status(500).json({ message: 'Failed to fetch stats' })
+  }
+})
+
 // ── ADMIN ─────────────────────────────────────────────────────────────
 
 // GET /api/admin/stats — platform totals
