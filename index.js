@@ -186,6 +186,22 @@ app.get('/api/products/:id', async (req, res) => {
   }
 })
 
+// GET /api/products/categories — distinct categories with product count
+app.get('/api/products/categories', async (req, res) => {
+  try {
+    const categories = await productCollection.aggregate([
+      { $match: { status: 'approved' } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]).toArray()
+
+    res.status(200).json(categories.map(c => ({ name: c._id, count: c.count })))
+  } catch (err) {
+    console.error('Error fetching categories:', err)
+    res.status(500).json({ message: 'Failed to fetch categories' })
+  }
+})
+
 // PUT /api/products/:id — update listing (forces back to pending for re-review)
 app.put('/api/products/:id', async (req, res) => {
   try {
