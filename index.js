@@ -15,6 +15,7 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ limit: '10mb', extended: true }))
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs')
 
 app.get('/', (req, res) => {
   res.send('ReSell Hub Server Running!')
@@ -30,10 +31,6 @@ const client = new MongoClient(uri, {
   }
 })
 
-// async function run() {
-//   try {
-//     await client.connect()
-
 client.connect(() => {
   console.log('Connecting to MongoDB')
 }).catch(console.dir)
@@ -47,10 +44,63 @@ const paymentCollection = database.collection('payments')
 const wishlistCollection = database.collection('wishlist')
 const reviewCollection = database.collection('reviews')
 
+// ── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
+
+const JWKS = createRemoteJWKSet(new URL(process.env.NEXT_PUBLIC_BETTER_AUTH_URL + '/api/auth/jwks'))
+
+async function verifyToken(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Unauthorized — no token provided' })
+    }
+
+    const token = authHeader.split(' ')[1]
+
+    // verify using BetterAuth JWKS
+    const { payload } = await jwtVerify(token, JWKS)
+
+    // get user from DB using payload.sub
+    const user = await userCollection.findOne({ _id: new ObjectId(payload.sub) })
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized — user not found' })
+    }
+
+    req.user = user
+    next()
+  } catch (err) {
+    console.error('Token error:', err.message)
+    return res.status(401).json({ message: 'Unauthorized — invalid or expired token' })
+  }
+}
+
+// verifyAdmin
+function verifyAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ message: 'Forbidden — admin access only' })
+  }
+  next()
+}
+
+// verifySeller
+function verifySeller(req, res, next) {
+  if (req.user?.role !== 'seller') {
+    return res.status(403).json({ message: 'Forbidden — seller access only' })
+  }
+  next()
+}
+
+// verifyBuyer
+function verifyBuyer(req, res, next) {
+  if (req.user?.role !== 'buyer') {
+    return res.status(403).json({ message: 'Forbidden — buyer access only' })
+  }
+  next()
+}
 
 // ── USERS ────────────────────────────────────────────────────────────
 
-// GET /api/users/top-sellers — sellers with most approved products
+// GET /api/users/top-sellers — public
 app.get('/api/users/top-sellers', async (req, res) => {
   try {
     const topSellers = await productCollection.aggregate([
@@ -67,9 +117,8 @@ app.get('/api/users/top-sellers', async (req, res) => {
   }
 })
 
-
-// GET /api/users/:userEmail — fetch user by email
-app.get('/api/users/:userEmail', async (req, res) => {
+// GET /api/users/:userEmail — private
+app.get('/api/users/:userEmail', verifyToken, async (req, res) => {
   try {
     const { userEmail } = req.params
     const user = await userCollection.findOne({ email: userEmail })
@@ -82,8 +131,8 @@ app.get('/api/users/:userEmail', async (req, res) => {
   }
 })
 
-// PATCH /api/users/:userEmail — update profile fields by email
-app.patch('/api/users/:userEmail', async (req, res) => {
+// PATCH /api/users/:userEmail — private
+app.patch('/api/users/:userEmail', verifyToken, async (req, res) => {
   try {
     const { userEmail } = req.params
     const { name, phone, location, image } = req.body
@@ -111,10 +160,9 @@ app.patch('/api/users/:userEmail', async (req, res) => {
   }
 })
 
-
 // ── PRODUCTS ─────────────────────────────────────────────────────────
 
-// GET /api/products/categories — distinct categories with product count
+// GET /api/products/categories — public
 app.get('/api/products/categories', async (req, res) => {
   try {
     const categories = await productCollection.aggregate([
@@ -130,9 +178,8 @@ app.get('/api/products/categories', async (req, res) => {
   }
 })
 
-
-// POST /api/products — create new listing (always pending, admin approves)
-app.post('/api/products', async (req, res) => {
+// POST /api/products — private, seller only
+app.post('/api/products', verifyToken, verifySeller, async (req, res) => {
   try {
     const { title, category, condition, price, stock, description, image, sellerId, sellerName, sellerEmail } = req.body
 
@@ -163,7 +210,7 @@ app.post('/api/products', async (req, res) => {
   }
 })
 
-// GET /api/products — fetch products with optional filters
+// GET /api/products — public
 app.get('/api/products', async (req, res) => {
   try {
     const { sellerId, status, search, category, sort, page = 1, limit = 9, minPrice, maxPrice, condition } = req.query
@@ -181,14 +228,12 @@ app.get('/api/products', async (req, res) => {
     if (search) query.title = { $regex: search, $options: 'i' }
     if (category && category !== 'all') query.category = category
 
-    // price range filter
     if (minPrice || maxPrice) {
       query.price = {}
       if (minPrice) query.price.$gte = Number(minPrice)
       if (maxPrice) query.price.$lte = Number(maxPrice)
     }
 
-    // condition filter
     if (condition && condition !== 'all') query.condition = condition
 
     let sortOption = { createdAt: -1 }
@@ -218,9 +263,7 @@ app.get('/api/products', async (req, res) => {
   }
 })
 
-
-
-// GET /api/products/:id — single product by ObjectId
+// GET /api/products/:id — public
 app.get('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params
@@ -233,9 +276,8 @@ app.get('/api/products/:id', async (req, res) => {
   }
 })
 
-
-// PUT /api/products/:id — update listing (forces back to pending for re-review)
-app.put('/api/products/:id', async (req, res) => {
+// PUT /api/products/:id — private, seller only
+app.put('/api/products/:id', verifyToken, verifySeller, async (req, res) => {
   try {
     const { id } = req.params
     const { sellerId, title, category, condition, price, stock, description, image } = req.body
@@ -272,8 +314,8 @@ app.put('/api/products/:id', async (req, res) => {
   }
 })
 
-// DELETE /api/products/:id?sellerId= — seller can only delete own listings
-app.delete('/api/products/:id', async (req, res) => {
+// DELETE /api/products/:id — private, seller only
+app.delete('/api/products/:id', verifyToken, verifySeller, async (req, res) => {
   try {
     const { id } = req.params
     const { sellerId } = req.query
@@ -298,24 +340,21 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 })
 
-
 // ── ORDERS ───────────────────────────────────────────────────────────
 
-
-// POST /api/orders — create order after successful payment
-app.post('/api/orders', async (req, res) => {
+// POST /api/orders — private
+app.post('/api/orders', verifyToken, async (req, res) => {
   try {
     const {
       productId, buyerId, buyerName, buyerEmail,
       sellerId, sellerName, sellerEmail, amount,
-      stripeSessionId, deliveryInfo, // deliveryInfo added
+      stripeSessionId, deliveryInfo,
     } = req.body
 
     if (!productId || !buyerId || !sellerId || !amount) {
       return res.status(400).json({ message: 'Missing required fields' })
     }
 
-    // prevent duplicate orders on refresh/back button
     if (stripeSessionId) {
       const existing = await orderCollection.findOne({ stripeSessionId })
       if (existing) return res.status(200).json(existing)
@@ -330,7 +369,6 @@ app.post('/api/orders', async (req, res) => {
       sellerName,
       sellerEmail,
       amount: Number(amount),
-      // delivery info from checkout form
       deliveryInfo: {
         name: deliveryInfo?.name || '',
         phone: deliveryInfo?.phone || '',
@@ -350,7 +388,8 @@ app.post('/api/orders', async (req, res) => {
   }
 })
 
-app.get('/api/orders/buyer/:buyerId', async (req, res) => {
+// GET /api/orders/buyer/:buyerId — private
+app.get('/api/orders/buyer/:buyerId', verifyToken, async (req, res) => {
   try {
     const { buyerId } = req.params
     const { status } = req.query
@@ -365,7 +404,6 @@ app.get('/api/orders/buyer/:buyerId', async (req, res) => {
 
     if (orders.length === 0) return res.status(200).json([])
 
-    // Enrich with product title and image
     const productIds = orders
       .map(o => { try { return new ObjectId(o.productId) } catch { return null } })
       .filter(Boolean)
@@ -390,8 +428,8 @@ app.get('/api/orders/buyer/:buyerId', async (req, res) => {
   }
 })
 
-// GET /api/orders/seller/:sellerId — seller's received orders
-app.get('/api/orders/seller/:sellerId', async (req, res) => {
+// GET /api/orders/seller/:sellerId — private
+app.get('/api/orders/seller/:sellerId', verifyToken, async (req, res) => {
   try {
     const { sellerId } = req.params
     const { status } = req.query
@@ -411,8 +449,8 @@ app.get('/api/orders/seller/:sellerId', async (req, res) => {
   }
 })
 
-// PATCH /api/orders/:orderId/cancel — buyer cancels own pending order
-app.patch('/api/orders/:orderId/cancel', async (req, res) => {
+// PATCH /api/orders/:orderId/cancel — private
+app.patch('/api/orders/:orderId/cancel', verifyToken, async (req, res) => {
   try {
     const { orderId } = req.params
     const { buyerId } = req.body
@@ -437,8 +475,8 @@ app.patch('/api/orders/:orderId/cancel', async (req, res) => {
   }
 })
 
-// PATCH /api/orders/:orderId/status — seller updates order status
-app.patch('/api/orders/:orderId/status', async (req, res) => {
+// PATCH /api/orders/:orderId/status — private, seller only
+app.patch('/api/orders/:orderId/status', verifyToken, verifySeller, async (req, res) => {
   try {
     const { orderId } = req.params
     const { sellerId, orderStatus } = req.body
@@ -468,11 +506,10 @@ app.patch('/api/orders/:orderId/status', async (req, res) => {
   }
 })
 
-
 // ── WISHLIST ─────────────────────────────────────────────────────────
 
-// GET /api/wishlist/:userId — buyer's saved products (with product details)
-app.get('/api/wishlist/:userId', async (req, res) => {
+// GET /api/wishlist/:userId — private
+app.get('/api/wishlist/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params
 
@@ -483,19 +520,16 @@ app.get('/api/wishlist/:userId', async (req, res) => {
 
     if (wishlist.length === 0) return res.status(200).json([])
 
-    // Fetch product details for each wishlist item
     const productIds = wishlist.map(item => new ObjectId(item.productId))
     const products = await productCollection
       .find({ _id: { $in: productIds } })
       .toArray()
 
-    // Map productId → product for quick lookup
     const productMap = {}
     products.forEach(p => {
       productMap[p._id.toString()] = p
     })
 
-    // Merge wishlist entry with its product fields
     const enriched = wishlist.map(item => {
       const product = productMap[item.productId] || {}
       return {
@@ -518,8 +552,8 @@ app.get('/api/wishlist/:userId', async (req, res) => {
   }
 })
 
-// POST /api/wishlist — add product to wishlist (duplicate check)
-app.post('/api/wishlist', async (req, res) => {
+// POST /api/wishlist — private
+app.post('/api/wishlist', verifyToken, async (req, res) => {
   try {
     const { userId, productId } = req.body
 
@@ -542,8 +576,8 @@ app.post('/api/wishlist', async (req, res) => {
   }
 })
 
-// DELETE /api/wishlist/:wishlistId?userId= — remove from wishlist
-app.delete('/api/wishlist/:wishlistId', async (req, res) => {
+// DELETE /api/wishlist/:wishlistId — private
+app.delete('/api/wishlist/:wishlistId', verifyToken, async (req, res) => {
   try {
     const { wishlistId } = req.params
     const { userId } = req.query
@@ -568,10 +602,9 @@ app.delete('/api/wishlist/:wishlistId', async (req, res) => {
   }
 })
 
-
 // ── REVIEWS ──────────────────────────────────────────────────────────
 
-// GET /api/reviews?productId= — all reviews for a product
+// GET /api/reviews — public
 app.get('/api/reviews', async (req, res) => {
   try {
     const { productId } = req.query
@@ -589,8 +622,8 @@ app.get('/api/reviews', async (req, res) => {
   }
 })
 
-// POST /api/reviews — submit a review (buyer must have ordered the product, once only)
-app.post('/api/reviews', async (req, res) => {
+// POST /api/reviews — private, buyer only
+app.post('/api/reviews', verifyToken, verifyBuyer, async (req, res) => {
   try {
     const { productId, buyerId, buyerName, rating, comment } = req.body
 
@@ -598,13 +631,11 @@ app.post('/api/reviews', async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' })
     }
 
-    // check buyer actually ordered this product
     const order = await orderCollection.findOne({ productId, buyerId })
     if (!order) {
       return res.status(403).json({ message: 'You can only review products you have purchased' })
     }
 
-    // duplicate check
     const existing = await reviewCollection.findOne({ productId, 'reviewerInfo.userId': buyerId })
     if (existing) {
       return res.status(409).json({ message: 'You have already reviewed this product' })
@@ -626,11 +657,10 @@ app.post('/api/reviews', async (req, res) => {
   }
 })
 
-
 // ── PAYMENTS ─────────────────────────────────────────────────────────
 
-// GET /api/payments/buyer/:buyerId — buyer's payment history
-app.get('/api/payments/buyer/:buyerId', async (req, res) => {
+// GET /api/payments/buyer/:buyerId — private
+app.get('/api/payments/buyer/:buyerId', verifyToken, async (req, res) => {
   try {
     const { buyerId } = req.params
 
@@ -646,9 +676,8 @@ app.get('/api/payments/buyer/:buyerId', async (req, res) => {
   }
 })
 
-
-// POST /api/payments — record payment after successful checkout
-app.post('/api/payments', async (req, res) => {
+// POST /api/payments — private
+app.post('/api/payments', verifyToken, async (req, res) => {
   try {
     const { orderId, transactionId, buyerId, amount, paymentDate } = req.body
 
@@ -656,7 +685,6 @@ app.post('/api/payments', async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' })
     }
 
-    // dedupe - if this transactionId already has a payment, return it instead of inserting again
     const existing = await paymentCollection.findOne({ transactionId })
     if (existing) return res.status(200).json(existing)
 
@@ -666,6 +694,7 @@ app.post('/api/payments', async (req, res) => {
       buyerId,
       amount: Number(amount),
       paymentStatus: 'paid',
+      paymentMethod: 'stripe',
       paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
       createdAt: new Date(),
     }
@@ -678,8 +707,9 @@ app.post('/api/payments', async (req, res) => {
   }
 })
 
+// ── STATS ─────────────────────────────────────────────────────────────
 
-
+// GET /api/stats — public
 app.get('/api/stats', async (req, res) => {
   try {
     const totalProducts = await productCollection.countDocuments({ status: 'approved' })
@@ -701,8 +731,8 @@ app.get('/api/stats', async (req, res) => {
 
 // ── ADMIN ─────────────────────────────────────────────────────────────
 
-// GET /api/admin/stats — platform totals
-app.get('/api/admin/stats', async (req, res) => {
+// GET /api/admin/stats — private, admin only
+app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [totalUsers, totalProducts, totalOrders, payments] = await Promise.all([
       userCollection.countDocuments(),
@@ -720,8 +750,8 @@ app.get('/api/admin/stats', async (req, res) => {
   }
 })
 
-// GET /api/admin/users — all users, optional ?role=&search=
-app.get('/api/admin/users', async (req, res) => {
+// GET /api/admin/users — private, admin only
+app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { role, search } = req.query
     const query = {}
@@ -739,7 +769,6 @@ app.get('/api/admin/users', async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray()
 
-    // strip passwords
     const safe = users.map(({ password, ...u }) => u)
     res.status(200).json(safe)
   } catch (err) {
@@ -748,8 +777,8 @@ app.get('/api/admin/users', async (req, res) => {
   }
 })
 
-// PATCH /api/admin/users/:userId/status — block or unblock
-app.patch('/api/admin/users/:userId/status', async (req, res) => {
+// PATCH /api/admin/users/:userId/status — private, admin only
+app.patch('/api/admin/users/:userId/status', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { userId } = req.params
     const { status } = req.body
@@ -774,8 +803,8 @@ app.patch('/api/admin/users/:userId/status', async (req, res) => {
   }
 })
 
-// DELETE /api/admin/users/:userId — delete any user
-app.delete('/api/admin/users/:userId', async (req, res) => {
+// DELETE /api/admin/users/:userId — private, admin only
+app.delete('/api/admin/users/:userId', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { userId } = req.params
 
@@ -792,8 +821,8 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   }
 })
 
-// GET /api/admin/products — all products regardless of status
-app.get('/api/admin/products', async (req, res) => {
+// GET /api/admin/products — private, admin only
+app.get('/api/admin/products', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { search, category, status } = req.query
     const query = {}
@@ -814,8 +843,8 @@ app.get('/api/admin/products', async (req, res) => {
   }
 })
 
-// PATCH /api/admin/products/:productId/status — approve or reject
-app.patch('/api/admin/products/:productId/status', async (req, res) => {
+// PATCH /api/admin/products/:productId/status — private, admin only
+app.patch('/api/admin/products/:productId/status', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { productId } = req.params
     const { status } = req.body
@@ -840,8 +869,8 @@ app.patch('/api/admin/products/:productId/status', async (req, res) => {
   }
 })
 
-// DELETE /api/admin/products/:productId — delete any product, no sellerId check
-app.delete('/api/admin/products/:productId', async (req, res) => {
+// DELETE /api/admin/products/:productId — private, admin only
+app.delete('/api/admin/products/:productId', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { productId } = req.params
 
@@ -858,8 +887,8 @@ app.delete('/api/admin/products/:productId', async (req, res) => {
   }
 })
 
-// GET /api/admin/orders — all orders, optional ?status=
-app.get('/api/admin/orders', async (req, res) => {
+// GET /api/admin/orders — private, admin only
+app.get('/api/admin/orders', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { status } = req.query
     const query = {}
@@ -878,8 +907,8 @@ app.get('/api/admin/orders', async (req, res) => {
   }
 })
 
-// PATCH /api/admin/orders/:orderId/status — override any order status
-app.patch('/api/admin/orders/:orderId/status', async (req, res) => {
+// PATCH /api/admin/orders/:orderId/status — private, admin only
+app.patch('/api/admin/orders/:orderId/status', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { orderId } = req.params
     const { orderStatus } = req.body
@@ -905,8 +934,8 @@ app.patch('/api/admin/orders/:orderId/status', async (req, res) => {
   }
 })
 
-// GET /api/admin/payments — all payments, optional ?status=&search=
-app.get('/api/admin/payments', async (req, res) => {
+// GET /api/admin/payments — private, admin only
+app.get('/api/admin/payments', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { status, search } = req.query
     const query = {}
@@ -926,18 +955,6 @@ app.get('/api/admin/payments', async (req, res) => {
   }
 })
 
-
-// await client.db('admin').command({ ping: 1 })
-//     console.log('Successfully connected to MongoDB!')
-
-//   } finally {
-//     // await client.close()
-//   }
-// }
-
-// run().catch(console.dir)
-
-// ADD this
 if (process.env.NODE_ENV !== 'production') {
   app.listen(port, () => {
     console.log(`ReSell Hub server running on port ${port}`)
