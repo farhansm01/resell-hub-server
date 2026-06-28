@@ -44,6 +44,21 @@ const paymentCollection = database.collection('payments')
 const wishlistCollection = database.collection('wishlist')
 const reviewCollection = database.collection('reviews')
 
+
+// ── AUTO RECONNECT — handles Vercel cold starts ───────────────────────────
+app.use(async (req, res, next) => {
+  try {
+    if (!client.topology || !client.topology.isConnected()) {
+      await client.connect()
+      console.log('MongoDB reconnected')
+    }
+    next()
+  } catch (err) {
+    console.error('DB reconnect failed:', err)
+    res.status(500).json({ message: 'Database connection failed' })
+  }
+})
+
 // ── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
 
 const JWKS = createRemoteJWKSet(new URL(process.env.NEXT_PUBLIC_BETTER_AUTH_URL + '/api/auth/jwks'))
