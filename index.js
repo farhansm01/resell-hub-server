@@ -775,7 +775,7 @@ app.get('/api/admin/payments', verifyToken, verifyAdmin, async (req, res) => {
 // ==================== FEEDBACK ENDPOINTS ====================
 app.post('/api/feedback', async (req, res) => {
   try {
-    const { name, email, role, rating, comment } = req.body
+    const { name, email, role, rating, comment, image } = req.body
     if (!name || !rating || !comment) {
       return res.status(400).json({ message: 'Missing required fields' })
     }
@@ -786,6 +786,7 @@ app.post('/api/feedback', async (req, res) => {
       role: role || 'Buyer',
       rating: Number(rating),
       comment: comment.trim(),
+      image: image || '',
       status: 'pending',
       createdAt: new Date(),
     }
@@ -801,7 +802,18 @@ app.post('/api/feedback', async (req, res) => {
 app.get('/api/feedback/approved', async (req, res) => {
   try {
     const feedbackList = await feedbackCollection.find({ status: 'approved' }).sort({ createdAt: -1 }).toArray()
-    res.status(200).json(feedbackList)
+    const enrichedList = await Promise.all(
+      feedbackList.map(async (item) => {
+        if (!item.image && item.email) {
+          const user = await userCollection.findOne({ email: item.email })
+          if (user && user.image) {
+            return { ...item, image: user.image }
+          }
+        }
+        return item
+      })
+    )
+    res.status(200).json(enrichedList)
   } catch (err) {
     console.error('Error fetching approved feedback:', err)
     res.status(500).json({ message: 'Failed to fetch feedback' })
