@@ -43,6 +43,7 @@ const orderCollection = database.collection('orders')
 const paymentCollection = database.collection('payments')
 const wishlistCollection = database.collection('wishlist')
 const reviewCollection = database.collection('reviews')
+const feedbackCollection = database.collection('feedback')
 
 
 // ── AUTO RECONNECT — handles Vercel cold starts ───────────────────────────
@@ -767,6 +768,97 @@ app.get('/api/admin/payments', verifyToken, verifyAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error fetching admin payments:', err)
     res.status(500).json({ message: 'Failed to fetch payments' })
+  }
+})
+
+
+// ==================== FEEDBACK ENDPOINTS ====================
+app.post('/api/feedback', async (req, res) => {
+  try {
+    const { name, email, role, rating, comment } = req.body
+    if (!name || !rating || !comment) {
+      return res.status(400).json({ message: 'Missing required fields' })
+    }
+
+    const feedback = {
+      name: name.trim(),
+      email: email ? email.trim() : '',
+      role: role || 'Buyer',
+      rating: Number(rating),
+      comment: comment.trim(),
+      status: 'pending',
+      createdAt: new Date(),
+    }
+
+    const result = await feedbackCollection.insertOne(feedback)
+    res.status(201).json({ ...feedback, _id: result.insertedId, message: 'Feedback submitted successfully' })
+  } catch (err) {
+    console.error('Error submitting feedback:', err)
+    res.status(500).json({ message: 'Failed to submit feedback' })
+  }
+})
+
+app.get('/api/feedback/approved', async (req, res) => {
+  try {
+    const feedbackList = await feedbackCollection.find({ status: 'approved' }).sort({ createdAt: -1 }).toArray()
+    res.status(200).json(feedbackList)
+  } catch (err) {
+    console.error('Error fetching approved feedback:', err)
+    res.status(500).json({ message: 'Failed to fetch feedback' })
+  }
+})
+
+app.get('/api/admin/feedback', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { status, search } = req.query
+    const query = {}
+    if (status && status !== 'all') query.status = status
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { comment: { $regex: search, $options: 'i' } }
+      ]
+    }
+
+    const feedbackList = await feedbackCollection.find(query).sort({ createdAt: -1 }).toArray()
+    res.status(200).json(feedbackList)
+  } catch (err) {
+    console.error('Error fetching admin feedback:', err)
+    res.status(500).json({ message: 'Failed to fetch admin feedback' })
+  }
+})
+
+app.patch('/api/admin/feedback/:id/status', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { status } = req.body
+
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' })
+    }
+
+    const result = await feedbackCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status, updatedAt: new Date() } }
+    )
+
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'Feedback not found' })
+    res.status(200).json({ message: `Feedback status updated to ${status}` })
+  } catch (err) {
+    console.error('Error updating feedback status:', err)
+    res.status(500).json({ message: 'Failed to update feedback status' })
+  }
+})
+
+app.delete('/api/admin/feedback/:id', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params
+    const result = await feedbackCollection.deleteOne({ _id: new ObjectId(id) })
+    if (result.deletedCount === 0) return res.status(404).json({ message: 'Feedback not found' })
+    res.status(200).json({ message: 'Feedback deleted' })
+  } catch (err) {
+    console.error('Error deleting feedback:', err)
+    res.status(500).json({ message: 'Failed to delete feedback' })
   }
 })
 
